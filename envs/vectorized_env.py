@@ -89,9 +89,14 @@ def profit_reward(env, ctx: RewardContext) -> torch.Tensor:
 def compliance_reward(env, ctx: RewardContext) -> torch.Tensor:
     """
     合规性奖励（辅助奖励）
-    如果余额≥0则奖励1，否则0
+    修改：即使购买配额后，如果绿电消费仍不满足RPS要求，则不合规
+    判断标准：实际绿电消费 >= RPS要求的绿电量
     """
-    return (ctx.quota_balance >= 0).float()
+    # RPS要求的绿电消费量 = 总消电 × 当前RPS比例
+    rps_required = ctx.electricity_consumed * env.current_rps_quota.unsqueeze(1)
+    # 判断绿电是否满足RPS要求
+    compliant = (ctx.re_consumed >= rps_required).float()
+    return compliant
 
 @dataclass
 class RewardConfig:
@@ -104,8 +109,9 @@ class RewardConfig:
     weights: List[float] = field(default_factory=lambda: [1.0])
     # 是否对奖励进行归一化处理
     normalize: bool = True
-    # 归一化缩放因子，用于避免梯度爆炸
-    scale: float = 1e-8
+    # 【关键修复】归一化缩放因子：原值1e-8导致奖励被压缩为0
+    # 利润已通过avg_demand进行了层面归一化，故scale改为1e-6保留可用梯度信息
+    scale: float = 1e-6
 
 
 
@@ -658,8 +664,10 @@ class VectorizedRPSEnv:
             fines_paid = torch.zeros(self.B, self.N, device=self.device)
         
         # 【基于RPS要求计算真实合规率】
-        # 合规判断：实际绿电消费 >= RPS要求的绿电量
-        compliant = (self.last_period_re_consumed >= self.last_period_required_quota).float()
+        # 修改后的定义：实际绿电消费 >= RPS要求的绿电量 则合规
+        # 即使通过市场购买配额，如果绿电消费仍不足，也不认为合规
+        required_green_energy = self.last_period_electricity_consumed * self.current_rps_quota.unsqueeze(1)
+        compliant = (self.last_period_re_consumed >= required_green_energy).float()
         compliance_rate = compliant.mean(dim=1)  # 每个环境的合规率
         
         # 【诊断统计信息】
