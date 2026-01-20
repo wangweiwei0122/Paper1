@@ -2,13 +2,11 @@
 from .vectorized_env import (
     VectorizedRPSEnv, 
     RewardRegistry,
-    RewardConfig,
     RewardContext,
 )
 
 __all__ = [
     'VectorizedRPSEnv', 
     'RewardRegistry',
-    'RewardConfig',
     'RewardContext',
 ]

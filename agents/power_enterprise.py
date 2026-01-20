@@ -27,7 +27,7 @@ class PowerEnterpriseAgentV4:
         if gpu_config is None:
             gpu_config = GPUConfig()
         
-        # 优先级：显式参数 > 配置对象 > 默认值
+        
         self.num_envs = num_envs or gpu_config.num_parallel_envs
         self.num_agents = num_agents or env_config.num_agents
         self.seed = seed or agent_config.seed
@@ -38,7 +38,7 @@ class PowerEnterpriseAgentV4:
         self.epsilon_range = (0.0, 0.05)  # 市场竞争强度范围
         # 价格边界：用于限制报价在合理范围内
         self.price_min, self.price_max = market_config.price_range
-        # Pareto分布参数（论文Table 1）
+        # Pareto分布参数
         self.demand_pareto_alpha = agent_config.demand_pareto_alpha
         self.demand_pareto_scale = agent_config.demand_pareto_scale
         self.re_share_init_range = agent_config.re_share_init_range
@@ -52,9 +52,6 @@ class PowerEnterpriseAgentV4:
         emin, emax = self.epsilon_range
         self.fixed_epsilon = torch.rand(self.num_envs, self.num_agents, generator=self._rng, device=self.device) * (emax - emin) + emin
         B, N = self.num_envs, self.num_agents
-        # Pareto分布采样（Lomax形式）：demand_i = np.random.pareto(a) * m
-        # 与论文 Simulation code/source/data_loader.py 中的实现保持一致
-        # 设定numpy种子以保证采样一致性
         if self.seed is not None:
             np.random.seed(int(self.seed))
         pareto_samples = np.random.pareto(self.demand_pareto_alpha, size=(B, N))

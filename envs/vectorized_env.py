@@ -94,7 +94,7 @@ def compliance_reward(env, ctx: RewardContext) -> torch.Tensor:
     2. 购买 TGC 交易 (TGC transaction)
     3. 进行 CAQ 交易 (CAQ transaction)
     
-    合规判断：交易后余额 >= 0（通过任何上述路径均可）
+    
     """
     # 基于交易后的余额判定：如果有剩余或持平配额，则合规
     compliant = (ctx.quota_balance >= 0).float()
@@ -353,7 +353,7 @@ class VectorizedRPSEnv:
         
         rewards = self._calculate_rewards(reward_ctx)
         
-        # 【关键】在罚款之前收集 infos，使 compliance_rate 基于交易后、罚款前的余额
+        # 在罚款之前收集 infos，使 compliance_rate 基于交易后、罚款前的余额
         observations = self._get_observations()
         global_state = self._get_global_state()
         infos = self._collect_info(
@@ -572,7 +572,7 @@ class VectorizedRPSEnv:
             if len(buyers) == 0:
                 continue
             
-            # 政府供应量计算 (按年增长，论文 Section 3.1)
+            
             # 政府供应 = 初始供应 × (1 + 年增长率)^period
             # period 单位为年，增长率为 2.5% 年增长
             period = self.current_period[env_idx].item()
@@ -653,29 +653,20 @@ class VectorizedRPSEnv:
     ) -> Dict:
         
         
-        # 直接使用current_period作为年份偏移（0->2020, 1->2021, ..., 10->2030）
+       
         year_tensor = self.current_period + self.base_year
         
         # 若未传入fines_paid，则设为全零
         if fines_paid is None:
             fines_paid = torch.zeros(self.B, self.N, device=self.device)
-        
-        # 【基于交易后余额计算合规率】与选题4对齐
-        # 修改：允许通过三条路径合规 - RE消费、TGC购买、CAQ交易
-        # 合规判断：交易后的配额余额 >= 0（即使通过购买配额实现也认为合规）
-        # 注意：此时quota_balance已包含市场交易结果（CAQ和TGC成交量）
         compliant = (self.agent_quota_balance >= 0).float()
         compliance_rate = compliant.mean(dim=1)  # 每个环境的合规率
         
-        # 【诊断统计信息】
+      
         avg_electricity = self.last_period_electricity_consumed.mean(dim=1)
         avg_required = self.last_period_required_quota.mean(dim=1)
         avg_re_consumed = self.last_period_re_consumed.mean(dim=1)
         avg_deficit = F.relu(avg_required - avg_re_consumed)
-
-        # 【计算利润统计（未归一化的原始利润）】
-        # self.last_profit_per_agent shape: (B, N) - 每个环境的每个企业的利润
-        # 对于返回给仿真脚本的聚合信息，计算平均值和标准差
         profit_mean = self.last_profit_per_agent.mean(dim=1)  # (B,) 每个环境的平均利润
         profit_std = self.last_profit_per_agent.std(dim=1)  # (B,) 每个环境的利润标准差
 

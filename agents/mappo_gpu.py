@@ -451,11 +451,7 @@ class MAPPO_GPU:
     def _try_compile(self):
         
         try:
-            # torch.compile 在某些环境下有兼容性问题，禁用以确保稳定运行
-            # if hasattr(torch, 'compile'):
-            #     self.actor = torch.compile(self.actor, mode='reduce-overhead')
-            #     self.critic = torch.compile(self.critic, mode='reduce-overhead')
-            #     print("Models compiled with torch.compile")
+           
             pass
         except Exception as e:
             print(f"torch.compile not available: {e}")

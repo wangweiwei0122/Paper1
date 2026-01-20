@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-GPU训练脚本 - 独立训练每个场景
 使用方式：
     python train_gpu.py --scenario A --num_episodes 1000 
     python train_gpu.py --scenario B --num_episodes 1000 
@@ -10,7 +9,7 @@ GPU训练脚本 - 独立训练每个场景
 import sys
 import os
 
-# 添加当前目录到Python路径以支持相对导入
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 import json
@@ -75,12 +74,12 @@ class GPUScenarioTrainer:
         config.training.gae_lambda = 0.95
         config.training.clip_epsilon = 0.2
         config.training.value_loss_coef = 0.5
-        config.training.entropy_coef = 0.01
+        config.training.entropy_coef = 0.15  # 提高探索系数从0.01到0.15
         config.training.max_grad_norm = 0.5
         
         # GPU配置
         config.gpu.num_parallel_envs = self.num_parallel_envs
-        config.gpu.use_mixed_precision = False  # 禁用混合精度以提高兼容性
+        config.gpu.use_mixed_precision = torch.cuda.is_available()  # 如果有CUDA则启用混合精度
         config.gpu.pin_memory = True
         
         return config
@@ -156,6 +155,11 @@ class GPUScenarioTrainer:
         policy_losses = []
         value_losses = []
         
+        
+        reward_mean = 0.0
+        reward_var = 1.0
+        reward_count = 0
+        
         start_time = time.time()
         
         for episode in range(self.num_episodes):
@@ -176,18 +180,33 @@ class GPUScenarioTrainer:
                 # 环境步进
                 next_obs, next_global_state, rewards, dones, infos = env.step(actions)
                 
+                # Running mean/std 归一化 reward
+                batch_mean = rewards.mean().item()
+                batch_std = rewards.std().item()
+                batch_count = rewards.numel()
+                
+                # 更新全局的mean和var（Welford在线算法）
+                delta = batch_mean - reward_mean
+                reward_mean += delta * batch_count / (reward_count + batch_count)
+                reward_var = (reward_var + (batch_std ** 2)) * reward_count / (reward_count + batch_count) if reward_count > 0 else batch_std ** 2
+                reward_count += batch_count
+                
+                # 归一化reward
+                eps = 1e-8
+                normalized_rewards = (rewards - reward_mean) / (np.sqrt(reward_var) + eps)
+                
                 # 存储到buffer
                 buffer.add(
                     obs=obs,
                     global_state=global_state,
                     action=actions,
-                    reward=rewards,
+                    reward=normalized_rewards,
                     done=dones,
                     log_prob=log_probs,
                     value=values,
                 )
                 
-                episode_reward += rewards.sum(dim=1)  # 累积奖励
+                episode_reward += rewards.sum(dim=1)  # 累积原始奖励用于显示
                 
                 obs = next_obs
                 global_state = next_global_state
@@ -220,8 +239,8 @@ class GPUScenarioTrainer:
                 print(f"  [{self.scenario_name}] Episode {episode+1:4d}/{self.num_episodes}: "
                       f"Reward={avg_reward:10.2f}")
             
-            # 每10个episode保存一次中间检查点
-            if (episode + 1) % 10 == 0:
+            # 每100个episode保存一次中间检查点
+            if (episode + 1) % 100 == 0:
                 checkpoint_dir = f'./gpu_models/{self.scenario_name}_checkpoints'
                 os.makedirs(checkpoint_dir, exist_ok=True)
                 intermediate_checkpoint = os.path.join(
@@ -292,14 +311,3 @@ trainer = GPUScenarioTrainer(
 
 results = trainer.train()
 
-# 打印摘要
-print("\n" + "="*80)
-print(f"✅ 训练完成！")
-print(f"   场景: {args.scenario}")
-print(f"   轮数: {args.num_episodes}")
-print(f"   平均奖励: {results['avg_reward']:.2f}")
-print(f"   最终奖励: {results['final_reward']:.2f}")
-print(f"   耗时: {results['elapsed_time']:.1f}s")
-print("\n📊 绘制奖励曲线:")
-print(f"   python plot_reward_from_checkpoint.py --scenario {args.scenario} --episode {args.num_episodes}")
-print("="*80 + "\n")
