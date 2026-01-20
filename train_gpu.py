@@ -20,7 +20,6 @@ import random
 import torch
 import numpy as np
 from datetime import datetime
-from torch.utils.tensorboard import SummaryWriter
 
 from configs.config import RPSConfig, SCENARIOS
 from envs import VectorizedRPSEnv
@@ -157,11 +156,6 @@ class GPUScenarioTrainer:
         policy_losses = []
         value_losses = []
         
-        # 创建 TensorBoard writer
-        log_dir = f'./tb_logs/{self.scenario_name}_{datetime.now().strftime("%Y%m%d_%H%M%S")}'
-        os.makedirs(log_dir, exist_ok=True)
-        writer = SummaryWriter(log_dir)
-        
         start_time = time.time()
         
         for episode in range(self.num_episodes):
@@ -221,11 +215,6 @@ class GPUScenarioTrainer:
             
             ep_time = time.time() - ep_start
             
-            # 记录到 TensorBoard
-            writer.add_scalar(f'{self.scenario_name}/reward', avg_reward, episode)
-            writer.add_scalar(f'{self.scenario_name}/policy_loss', float(metrics['policy_loss']), episode)
-            writer.add_scalar(f'{self.scenario_name}/value_loss', float(metrics['value_loss']), episode)
-            
             # 每个episode都打印奖励
             if (episode + 1) % 1 == 0:
                 print(f"  [{self.scenario_name}] Episode {episode+1:4d}/{self.num_episodes}: "
@@ -240,9 +229,6 @@ class GPUScenarioTrainer:
                     f'{self.scenario_name}_episode_{episode+1:04d}.pt'
                 )
                 agent.save(intermediate_checkpoint)
-        
-        # 关闭 TensorBoard writer
-        writer.close()
         
         total_time = time.time() - start_time
         
@@ -294,7 +280,7 @@ parser = argparse.ArgumentParser(description='GPU Scenario Training')
 parser.add_argument('--scenario', type=str, default='A', 
                     help='Scenario name (A, A1-A7, B, C)')
 parser.add_argument('--num_episodes', type=int, default=100, 
-                    help='Number of training episodes')
+                    help='Number of training episodes (default: 100 for quick debugging)')
 
 args = parser.parse_args()
 
@@ -305,3 +291,15 @@ trainer = GPUScenarioTrainer(
 )
 
 results = trainer.train()
+
+# 打印摘要
+print("\n" + "="*80)
+print(f"✅ 训练完成！")
+print(f"   场景: {args.scenario}")
+print(f"   轮数: {args.num_episodes}")
+print(f"   平均奖励: {results['avg_reward']:.2f}")
+print(f"   最终奖励: {results['final_reward']:.2f}")
+print(f"   耗时: {results['elapsed_time']:.1f}s")
+print("\n📊 绘制奖励曲线:")
+print(f"   python plot_reward_from_checkpoint.py --scenario {args.scenario} --episode {args.num_episodes}")
+print("="*80 + "\n")
