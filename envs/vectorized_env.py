@@ -88,30 +88,19 @@ def profit_reward(env, ctx: RewardContext) -> torch.Tensor:
 @RewardRegistry.register("compliance")
 def compliance_reward(env, ctx: RewardContext) -> torch.Tensor:
     """
-    合规性奖励（辅助奖励）
-    修改：即使购买配额后，如果绿电消费仍不满足RPS要求，则不合规
-    判断标准：实际绿电消费 >= RPS要求的绿电量
+    合规性奖励（辅助奖励，可选）
+    
+    1. 实际绿电消费 (RE consumption)
+    2. 购买 TGC 交易 (TGC transaction)
+    3. 进行 CAQ 交易 (CAQ transaction)
+    
+    合规判断：交易后余额 >= 0（通过任何上述路径均可）
     """
-    # RPS要求的绿电消费量 = 总消电 × 当前RPS比例
-    rps_required = ctx.electricity_consumed * env.current_rps_quota.unsqueeze(1)
-    # 判断绿电是否满足RPS要求
-    compliant = (ctx.re_consumed >= rps_required).float()
+    # 基于交易后的余额判定：如果有剩余或持平配额，则合规
+    compliant = (ctx.quota_balance >= 0).float()
     return compliant
 
-@dataclass
-class RewardConfig:
-    """
-    奖励配置类：定义使用哪些奖励组件及其权重
-    """
-    # 奖励组件列表，如["profit", "compliance"]
-    components: List[str] = field(default_factory=lambda: ["profit"])
-    # 对应的权重列表
-    weights: List[float] = field(default_factory=lambda: [1.0])
-    # 是否对奖励进行归一化处理
-    normalize: bool = True
-    # 【关键修复】归一化缩放因子：原值1e-8导致奖励被压缩为0
-    # 利润已通过avg_demand进行了层面归一化，故scale改为1e-6保留可用梯度信息
-    scale: float = 1e-6
+
 
 
 
@@ -159,7 +148,6 @@ class VectorizedRPSEnv:
         self.base_year = base_year
         self.include_caq_market = include_caq_market
         self.include_tgc_market = include_tgc_market
-        self.reward_config = RewardConfig()
         self.agent_manager = agent_manager
         
         # 策略参数（使用类常量）
@@ -628,23 +616,32 @@ class VectorizedRPSEnv:
 
     
     def _calculate_rewards(self, ctx: RewardContext) -> torch.Tensor:
-    
-        total_reward = torch.zeros_like(ctx.electricity_consumed)
         
-        # 累加各组件的加权奖励
-        for component, weight in zip(
-            self.reward_config.components,
-            self.reward_config.weights
-        ):
-            reward_func = RewardRegistry.get(component)
-            component_reward = reward_func(self, ctx)
-            total_reward += component_reward * weight
+        # 售电收入
+        revenue = ctx.electricity_consumed * ctx.price_retail
         
-        # 全局缩放
-        if self.reward_config.normalize:
-            total_reward = total_reward * self.reward_config.scale
+        # 发电成本
+        cost = ctx.non_re_consumed * ctx.price_coal + ctx.re_consumed * ctx.price_re
         
-        return total_reward
+        # 交易成本
+        caq_cost = ctx.caq_trades * ctx.caq_price.unsqueeze(1)
+        tgc_cost = ctx.tgc_trades * ctx.tgc_price.unsqueeze(1)
+        
+        # 罚款与奖励
+        penalty = F.relu(-ctx.quota_balance) * ctx.fine_per_unit
+        bonus = F.relu(ctx.quota_balance) * ctx.reward_per_unit
+        
+        # 利润 = 收入 - 成本 - 罚款 + 奖励
+        profit = revenue - cost - caq_cost - tgc_cost - penalty + bonus
+        
+        # 归一化（除以平均需求，避免需求量变大导致奖励爆炸）
+        avg_demand = ctx.electricity_consumed.mean(dim=1, keepdim=True).clamp(min=1.0)
+        profit_normalized = profit / avg_demand
+        
+       
+        reward = profit_normalized * 1e-3
+        
+        return reward
     
     def _collect_info( #收集信息的
         self,
@@ -663,11 +660,11 @@ class VectorizedRPSEnv:
         if fines_paid is None:
             fines_paid = torch.zeros(self.B, self.N, device=self.device)
         
-        # 【基于RPS要求计算真实合规率】
-        # 修改后的定义：实际绿电消费 >= RPS要求的绿电量 则合规
-        # 即使通过市场购买配额，如果绿电消费仍不足，也不认为合规
-        required_green_energy = self.last_period_electricity_consumed * self.current_rps_quota.unsqueeze(1)
-        compliant = (self.last_period_re_consumed >= required_green_energy).float()
+        # 【基于交易后余额计算合规率】与选题4对齐
+        # 修改：允许通过三条路径合规 - RE消费、TGC购买、CAQ交易
+        # 合规判断：交易后的配额余额 >= 0（即使通过购买配额实现也认为合规）
+        # 注意：此时quota_balance已包含市场交易结果（CAQ和TGC成交量）
+        compliant = (self.agent_quota_balance >= 0).float()
         compliance_rate = compliant.mean(dim=1)  # 每个环境的合规率
         
         # 【诊断统计信息】
