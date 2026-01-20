@@ -1,0 +1,29 @@
+# Byte-compiled / cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# PyTorch / models / checkpoints
+*.pt
+*.pth
+*.ckpt
+checkpoints/
+results/
+logs/
+
+# Env / editor
+.env
+.vscode/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+
+# Data
+data/
+*.csv
+*.npz
+
+# Misc
+*.log
